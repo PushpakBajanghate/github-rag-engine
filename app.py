@@ -13,13 +13,19 @@ with st.sidebar:
     index_btn = st.button("🚀 Ingest & Index Repository")
     
     if index_btn and repo_url:
-        with st.spinner("1. Fetching repository files and issues..."):
-            raw_docs = fetch_repository_data(repo_url)
-        with st.spinner(f"2. Chunking {len(raw_docs)} documents with AST splitters..."):
-            chunked_docs = chunk_code_and_docs(raw_docs)
-        with st.spinner(f"3. Embedding and persisting {len(chunked_docs)} chunks to ChromaDB..."):
-            index_documents(chunked_docs)
-        st.success(f"Successfully indexed {len(chunked_docs)} chunks from `{repo_url}`!")
+        try:
+            with st.spinner("1. Fetching repository files and issues..."):
+                raw_docs = fetch_repository_data(repo_url)
+            if not raw_docs:
+                st.warning("No supported code files or issues found in this repository.")
+            else:
+                with st.spinner(f"2. Chunking {len(raw_docs)} documents with AST splitters..."):
+                    chunked_docs = chunk_code_and_docs(raw_docs)
+                with st.spinner(f"3. Embedding and persisting {len(chunked_docs)} chunks to ChromaDB..."):
+                    index_documents(chunked_docs)
+                st.success(f"Successfully indexed {len(chunked_docs)} chunks from `{repo_url}`!")
+        except Exception as e:
+            st.error(f"Error during ingestion/indexing: {e}")
 
 # Chat Interface
 if "messages" not in st.session_state:
@@ -40,20 +46,23 @@ if prompt := st.chat_input("Ask a question about the repository or its past bugs
         
     with st.chat_message("assistant"):
         with st.spinner("Searching codebase & generating grounded answer..."):
-            answer, sources = ask_repo(prompt)
-            st.markdown(answer)
-            
-            source_data = [
-                {"source": s.metadata.get("source"), "url": s.metadata.get("html_url"), "type": s.metadata.get("type")}
-                for s in sources
-            ]
-            
-            with st.expander("📚 View Retrieved Sources"):
-                for s in source_data:
-                    st.markdown(f"- **[{s['type']}]** [{s['source']}]({s['url']})")
-                    
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": answer,
-                "sources": source_data
-            })
+            try:
+                answer, sources = ask_repo(prompt)
+                st.markdown(answer)
+                
+                source_data = [
+                    {"source": s.metadata.get("source"), "url": s.metadata.get("html_url"), "type": s.metadata.get("type")}
+                    for s in sources
+                ]
+                
+                with st.expander("📚 View Retrieved Sources"):
+                    for s in source_data:
+                        st.markdown(f"- **[{s['type']}]** [{s['source']}]({s['url']})")
+                        
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": answer,
+                    "sources": source_data
+                })
+            except Exception as e:
+                st.error(f"Error querying repository: {e}")
