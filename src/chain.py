@@ -1,21 +1,21 @@
-"""LangChain RAG pipeline & citation formatter."""
+"""LangChain RAG pipeline & citation formatter supporting Gemini and OpenAI."""
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from langchain_openai import ChatOpenAI
 from src.config import settings
 from src.retriever import TwoStageRetriever
 
-RAG_SYSTEM_PROMPT = """You are an expert GitHub Codebase and Architecture AI assistant.
-Your job is to answer questions about the repository using only the provided context chunks.
+RAG_SYSTEM_PROMPT = """You are an expert GitHub Codebase Architect and Engineering Assistant.
+Answer the user's question about the repository using ONLY the provided code context and issue records.
 
-Instructions:
-1. Base your answer strictly on the provided context. If the context does not contain enough information, state clearly what is missing.
-2. When explaining code, refer to specific files, functions, and architecture patterns shown in the context.
-3. Always include precise citations using markdown links with file paths and line references.
-4. Format code blocks with the appropriate programming language identifier.
+Guidelines:
+1. Provide technical, accurate, and insightful explanations based on the context.
+2. Refer explicitly to relevant files, classes, and function names.
+3. Structure your response with clear markdown headings, bullet points, and syntax-highlighted code blocks.
+4. If the provided context is insufficient to answer completely, acknowledge what is known and specify what details are missing.
+5. Emphasize architectural relationships, dependencies, and design patterns when asked.
 
 Context:
 {context}
@@ -28,16 +28,34 @@ class RAGChain:
     def __init__(
         self,
         retriever: TwoStageRetriever,
-        openai_api_key: str = settings.openai_api_key,
-        model_name: str = settings.llm_model,
+        provider: Optional[str] = None,
+        api_key: Optional[str] = None,
+        model_name: Optional[str] = None,
         temperature: float = settings.temperature
     ):
         self.retriever = retriever
-        self.llm = ChatOpenAI(
-            model=model_name,
-            temperature=temperature,
-            openai_api_key=openai_api_key
-        )
+        selected_provider = provider or settings.active_provider
+
+        if selected_provider == "gemini":
+            key = api_key or settings.google_api_key
+            model = model_name or settings.gemini_model
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            self.llm = ChatGoogleGenerativeAI(
+                model=model,
+                temperature=temperature,
+                google_api_key=key
+            )
+        elif selected_provider == "openai":
+            key = api_key or settings.openai_api_key
+            model = model_name or settings.openai_model
+            from langchain_openai import ChatOpenAI
+            self.llm = ChatOpenAI(
+                model=model,
+                temperature=temperature,
+                openai_api_key=key
+            )
+        else:
+            raise ValueError("No API Key detected! Please configure GOOGLE_API_KEY or OPENAI_API_KEY.")
 
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", RAG_SYSTEM_PROMPT),
@@ -47,25 +65,36 @@ class RAGChain:
 
     @staticmethod
     def format_context(documents: List[Document]) -> str:
+        """Formats retrieved documents with source headers and line numbers."""
         formatted_chunks = []
         for idx, doc in enumerate(documents, start=1):
             source = doc.metadata.get("source", "Unknown")
             html_url = doc.metadata.get("html_url", "")
             doc_type = doc.metadata.get("type", "code")
             
-            chunk_header = f"--- Document [{idx}] | Source: {source} | Type: {doc_type} ---"
+            chunk_header = f"=== [Document {idx}] Source: {source} ({doc_type}) ==="
             if html_url:
-                chunk_header += f"\nLink: {html_url}"
+                chunk_header += f"\nGitHub URL: {html_url}"
             
             formatted_chunks.append(f"{chunk_header}\n{doc.page_content}\n")
         return "\n".join(formatted_chunks)
 
     def answer_question(self, question: str) -> Dict[str, Any]:
+        """Executes full RAG workflow with citations."""
         relevant_docs = self.retriever.get_relevant_documents(question)
         context_str = self.format_context(relevant_docs)
 
         chain = self.prompt | self.llm | self.output_parser
-        response_text = chain.invoke({"context": context_str, "question": question})
+        raw_response = chain.invoke({"context": context_str, "question": question})
+
+        # Ensure string response format
+        if isinstance(raw_response, list):
+            response_text = "".join(
+                item.get("text", str(item)) if isinstance(item, dict) else str(item)
+                for item in raw_response
+            )
+        else:
+            response_text = str(raw_response)
 
         citations = []
         for doc in relevant_docs:
@@ -74,7 +103,8 @@ class RAGChain:
                 "file_path": doc.metadata.get("file_path", ""),
                 "html_url": doc.metadata.get("html_url", ""),
                 "score": doc.metadata.get("rerank_score", None),
-                "preview": doc.page_content[:200] + ("..." if len(doc.page_content) > 200 else "")
+                "type": doc.metadata.get("type", "code"),
+                "preview": doc.page_content[:300] + ("..." if len(doc.page_content) > 300 else "")
             })
 
         return {
