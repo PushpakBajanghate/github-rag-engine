@@ -287,9 +287,15 @@ if ingest_btn:
                 chunker = CodeAwareChunker()
                 chunks = chunker.split_documents(docs)
 
-                st.write(f"🧠 Step 3/4: Generating vector embeddings ({len(chunks)} chunks) via {selected_provider_label}...")
+                total_chunks = len(chunks)
+                st.write(f"🧠 Step 3/4: Generating vector embeddings for {total_chunks} chunks via {selected_provider_label}...")
+                st.caption("⚠️ Gemini free tier: Batching 5 docs at a time with 12s pauses between batches. Large repos may take a few minutes.")
                 vsm = VectorStoreManager(provider=provider_key)
-                vectorstore = vsm.create_or_update_vectorstore(repo_input, chunks)
+                vectorstore = vsm.create_or_update_vectorstore(
+                    repo_input,
+                    chunks,
+                    progress_callback=lambda msg: st.write(msg)
+                )
 
                 st.write("🎯 Step 4/4: Initializing Two-Stage Retriever (ChromaDB + FlashRank)...")
                 retriever = TwoStageRetriever(vectorstore=vectorstore)
