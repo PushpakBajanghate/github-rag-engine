@@ -2,18 +2,30 @@
 __pycache__/
 *.py[cod]
 *.class
-.venv/
-venv/
+*.so
+.Python
 env/
+venv/
+.venv/
+build/
+dist/
+*.egg-info/
+
+# Environment variables & API keys
+.env
+.env.local
+.env.*.local
 *.env
-.env*
 !.env.example
 
-# Node / JS
-node_modules/
-dist/
-build/
-.next/
+# Vector Database storage (ChromaDB)
+data/*
+!data/.gitkeep
+*.sqlite3
+chroma_db/
+
+# Streamlit
+.streamlit/secrets.toml
 
 # IDE & OS
 .vscode/
