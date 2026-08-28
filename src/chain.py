@@ -1,5 +1,5 @@
 from functools import lru_cache
-from typing import Tuple, List, Generator
+from typing import Tuple, List, Generator, Optional, Any
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
@@ -45,26 +45,13 @@ def get_rag_chain():
     ])
     return prompt | llm | StrOutputParser()
 
-def ask_repo(query: str) -> Tuple[str, List[Document]]:
-    """Non-streaming query response."""
-    retrieved_docs = retrieve_and_rerank(query=query)
-    context_str = format_docs(retrieved_docs)
-    chain = get_rag_chain()
-    
-    response = chain.invoke({
-        "context": context_str,
-        "question": query
-    })
-    return response, retrieved_docs
+def ask_repo(query: str) -> Tuple[str, List[Document], Optional[Any]]:
+    """Runs query through the LangGraph normalization and hybrid retrieval pipeline."""
+    from src.graph import run_rag_graph
+    result = run_rag_graph(query)
+    return result.get("answer", ""), result.get("retrieved_docs", []), result.get("normalized_query")
 
-def ask_repo_stream(query: str) -> Tuple[Generator[str, None, None], List[Document]]:
-    """Streaming query response for fast real-time UI rendering."""
-    retrieved_docs = retrieve_and_rerank(query=query)
-    context_str = format_docs(retrieved_docs)
-    chain = get_rag_chain()
-    
-    stream_generator = chain.stream({
-        "context": context_str,
-        "question": query
-    })
-    return stream_generator, retrieved_docs
+def ask_repo_stream(query: str) -> Tuple[Generator[str, None, None], List[Document], Optional[Any]]:
+    """Streaming query response utilizing LangGraph query normalization & hybrid retrieval."""
+    from src.graph import stream_rag_graph
+    return stream_rag_graph(query)
