@@ -158,3 +158,24 @@ GITHUB_TOKEN=your_github_token_here_optional
 streamlit run app.py
 ```
 Open `http://localhost:8501` in your browser, enter any GitHub repository URL in the sidebar, click **🚀 Ingest & Index Repository**, and start exploring!
+
+---
+
+## ☁️ 1-Click Streamlit Cloud Deployment
+
+Deploy this RAG Engine to **Streamlit Community Cloud** in 3 simple steps:
+
+1. **Push to GitHub**: Ensure your latest changes are pushed to your GitHub repository `main` branch.
+2. **Deploy on Streamlit**: Go to [share.streamlit.io](https://share.streamlit.io), connect your GitHub account, and select:
+   - **Repository:** `PushpakBajanghate/github-rag-engine`
+   - **Branch:** `main`
+   - **Main file path:** `app.py`
+3. **Configure Secrets**:
+   - In your Streamlit Cloud Dashboard, go to **Settings** $\to$ **Secrets**.
+   - Paste your API keys:
+     ```toml
+     GOOGLE_API_KEY = "AIzaSy..."
+     GITHUB_TOKEN = "ghp_..." # Optional
+     ```
+   - Click **Save**. Your RAG engine is now live and globally accessible!
+
