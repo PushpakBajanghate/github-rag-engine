@@ -8,7 +8,16 @@ class Settings(BaseSettings):
     
     # Embedding and LLM specifications
     EMBEDDING_MODEL: str = "models/gemini-embedding-001"
-    LLM_MODEL: str = "gemini-3.6-flash"
+
+    # Primary LLM model (experimentally verified working models ordered by quota headroom)
+    LLM_MODEL: str = "gemini-3.5-flash"
+
+    # Ordered fallback chain — tried in sequence when primary hits 429 / 404 / 503
+    LLM_MODEL_FALLBACKS: list = [
+        "gemini-3.5-flash-lite",      # ~1500 rpm, very generous free tier
+        "gemini-flash-lite-latest",   # alias for latest lite flash
+        "gemini-3.6-flash",           # 20 req/day limit — last resort only
+    ]
     
     model_config = SettingsConfigDict(
         env_file=".env",
