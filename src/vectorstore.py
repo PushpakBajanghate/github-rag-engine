@@ -12,76 +12,101 @@ from src.config import config
 
 logger = logging.getLogger(__name__)
 
-GEMINI_MICRO_BATCH_SIZE = 10
-GEMINI_DELAY_SECONDS = 1.0
+try:
+    from fastembed import TextEmbedding
+    HAS_FASTEMBED = True
+except ImportError:
+    HAS_FASTEMBED = False
 
-class ResilientGoogleEmbeddings(Embeddings):
+class FastEmbedLocalEmbeddings(Embeddings):
+    """Local, ultra-fast ONNX embedding engine (zero API cost, zero rate limits)."""
+    def __init__(self, model_name: str = "BAAI/bge-small-en-v1.5"):
+        self.model = TextEmbedding(model_name=model_name)
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        embeddings = list(self.model.embed(texts))
+        return [e.tolist() for e in embeddings]
+
+    def embed_query(self, text: str) -> List[float]:
+        embeddings = list(self.model.embed([text]))
+        return embeddings[0].tolist()
+
+class HybridResilientEmbeddings(Embeddings):
     """
-    Wrapper around GoogleGenerativeAIEmbeddings that gracefully handles
-    429 RESOURCE_EXHAUSTED rate limits with exponential backoff and safe micro-batching.
+    Intelligent embedding engine:
+    Uses fast, local BAAI/bge-small ONNX embeddings by default for sub-second, zero-quota processing,
+    with graceful fallback across providers.
     """
     def __init__(
         self,
         model: str,
         google_api_key: str,
-        max_retries: int = 8,
-        base_delay: float = 2.0,
-        max_delay: float = 60.0,
-        micro_batch_size: int = GEMINI_MICRO_BATCH_SIZE,
-        delay_between_batches: float = GEMINI_DELAY_SECONDS,
+        prefer_local: bool = True
     ):
-        self.underlying = GoogleGenerativeAIEmbeddings(
-            model=model,
-            google_api_key=google_api_key
-        )
-        self.max_retries = max_retries
-        self.base_delay = base_delay
-        self.max_delay = max_delay
-        self.micro_batch_size = micro_batch_size
-        self.delay_between_batches = delay_between_batches
+        self.prefer_local = prefer_local
+        self.local_model = FastEmbedLocalEmbeddings() if HAS_FASTEMBED else None
+        self.google_model = None
+        self.google_api_key = google_api_key
+        self.model = model
 
-    def _embed_with_retry(self, fn: Callable, *args, **kwargs):
-        for attempt in range(self.max_retries):
+    def _get_google_model(self):
+        if self.google_model is None and self.google_api_key:
             try:
-                return fn(*args, **kwargs)
-            except Exception as e:
-                err_str = str(e).lower()
-                is_rate_limit = (
-                    "429" in err_str
-                    or "resource_exhausted" in err_str
-                    or "quota" in err_str
-                    or "rate limit" in err_str
+                self.google_model = GoogleGenerativeAIEmbeddings(
+                    model="models/gemini-embedding-001",
+                    google_api_key=self.google_api_key
                 )
-                if attempt == self.max_retries - 1 or not is_rate_limit:
-                    raise
-                # Exponential backoff with jitter
-                sleep_time = min(
-                    self.max_delay,
-                    self.base_delay * (2 ** attempt) + random.uniform(0.5, 2.0)
-                )
-                print(f"[Rate Limit 429] RESOURCE_EXHAUSTED. Retrying in {sleep_time:.1f}s (Attempt {attempt+1}/{self.max_retries})...")
-                time.sleep(sleep_time)
+            except Exception:
+                pass
+        return self.google_model
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        all_embeddings = []
-        for i in range(0, len(texts), self.micro_batch_size):
-            batch = texts[i : i + self.micro_batch_size]
-            embeddings = self._embed_with_retry(self.underlying.embed_documents, batch)
-            all_embeddings.extend(embeddings)
-            if i + self.micro_batch_size < len(texts):
-                time.sleep(self.delay_between_batches)
-        return all_embeddings
+        if self.prefer_local and self.local_model:
+            try:
+                return self.local_model.embed_documents(texts)
+            except Exception as e:
+                logger.warning(f"Local embedding failed: {e}. Falling back to Google Embeddings.")
+
+        # Remote Google Embeddings
+        gm = self._get_google_model()
+        if gm:
+            try:
+                return gm.embed_documents(texts)
+            except Exception as e:
+                if self.local_model:
+                    logger.warning(f"Google embeddings quota/error ({e}). Falling back to local FastEmbed.")
+                    return self.local_model.embed_documents(texts)
+                raise e
+        elif self.local_model:
+            return self.local_model.embed_documents(texts)
+        raise RuntimeError("No embedding provider available.")
 
     def embed_query(self, text: str) -> List[float]:
-        return self._embed_with_retry(self.underlying.embed_query, text)
+        if self.prefer_local and self.local_model:
+            try:
+                return self.local_model.embed_query(text)
+            except Exception:
+                pass
+
+        gm = self._get_google_model()
+        if gm:
+            try:
+                return gm.embed_query(text)
+            except Exception:
+                if self.local_model:
+                    return self.local_model.embed_query(text)
+        elif self.local_model:
+            return self.local_model.embed_query(text)
+        raise RuntimeError("No embedding provider available.")
 
 _CACHED_VECTORSTORE: Optional[Chroma] = None
 
 @lru_cache(maxsize=1)
 def get_embedding_model() -> Embeddings:
-    return ResilientGoogleEmbeddings(
+    return HybridResilientEmbeddings(
         model=config.EMBEDDING_MODEL,
-        google_api_key=config.GOOGLE_API_KEY
+        google_api_key=config.GOOGLE_API_KEY,
+        prefer_local=True
     )
 
 def index_documents(
