@@ -34,8 +34,13 @@ with st.sidebar:
                         chunk_size=chunk_size,
                         chunk_overlap=chunk_overlap
                     )
-                with st.spinner(f"3. Embedding and persisting {len(chunked_docs)} chunks to ChromaDB..."):
-                    index_documents(chunked_docs)
+                status_placeholder = st.empty()
+                def on_progress(msg: str):
+                    status_placeholder.info(f"⏳ {msg}")
+                    
+                with st.spinner(f"3. Embedding and persisting {len(chunked_docs)} chunks to ChromaDB (rate-limit safe)..."):
+                    index_documents(chunked_docs, progress_callback=on_progress)
+                status_placeholder.empty()
                 st.success(f"✅ Indexed {len(chunked_docs)} chunks from {len(raw_docs)} files (including {notebook_count} notebooks)!")
         except Exception as e:
             st.error(f"Error during ingestion/indexing: {e}")
