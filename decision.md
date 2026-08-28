@@ -105,3 +105,19 @@ This living document tracks all major engineering challenges, production errors,
   Redesigned `app.py` into a modern Obsidian Dark Slate developer console with glassmorphic cards, clean sidebar controls, and multi-agent trace tabs.
 * **Brief Description:**
   Added dynamic starter prompt cards, multi-agent observability inspector (`Query Normalization`, `Syntax Specialist`, `Architecture Arbiter`), and syntax-highlighted code chunk inspectors tagged by language.
+
+---
+
+### DEC-010: LLM 429 RESOURCE_EXHAUSTED — Multi-Model Waterfall Fallback
+* **Error / Challenge:**
+  `Error calling model 'gemini-3.6-flash' (RESOURCE_EXHAUSTED): 429 RESOURCE_EXHAUSTED`
+  `Quota exceeded for metric: generate_content_free_tier_requests, limit: 20, model: gemini-3.6-flash`
+  The free-tier model `gemini-3.6-flash` has a hard ceiling of **20 requests per day**. Even 3–4 user queries per session exhausted this, crashing the application with an unhandled exception every time.
+* **Fix / Decision Taken:**
+  Implemented a **multi-model waterfall fallback engine** across `src/chain.py` and `src/graph.py`.
+  All LLM calls now route through `_invoke_with_fallback()` and `_stream_with_fallback()` which silently downshift to the next healthy model on any 429 / 404 / 503 error.
+* **Brief Description:**
+  1. Updated `src/config.py` with `LLM_MODEL = "gemini-3.5-flash"` (primary, generous quota) and `LLM_MODEL_FALLBACKS = ["gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3.6-flash"]` (ordered by quota headroom).
+  2. Wrote `_build_llm(model)`, `_invoke_with_fallback(prompt_value)`, and `_stream_with_fallback(prompt_value)` in `src/chain.py`.
+  3. Wired `generate_answer_node()` and `stream_rag_graph()` in `src/graph.py` to these resilient callers.
+  The app now silently cycles through models and **never crashes due to quota exhaustion again**, regardless of free-tier limits.
