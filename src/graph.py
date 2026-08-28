@@ -57,23 +57,18 @@ def hybrid_retrieve_node(state: RAGGraphState) -> Dict[str, Any]:
     }
 
 def generate_answer_node(state: RAGGraphState) -> Dict[str, Any]:
-    """Node 3: Generates grounded technical response using context."""
-    llm = get_llm()
+    """Node 3: Generates grounded technical response using context (with multi-model fallback)."""
+    from src.chain import _invoke_with_fallback, SYSTEM_PROMPT
     prompt = ChatPromptTemplate.from_messages([
         ("system", SYSTEM_PROMPT),
         ("human", "{question}")
     ])
-    
-    chain = prompt | llm | StrOutputParser()
-    
-    answer = chain.invoke({
-        "context": state.get("context_str", ""),
-        "question": state["question"]
-    })
-    
-    return {
-        "answer": answer
-    }
+    prompt_value = prompt.format_messages(
+        context=state.get("context_str", ""),
+        question=state["question"]
+    )
+    answer = _invoke_with_fallback(prompt_value)
+    return {"answer": answer}
 
 def build_rag_graph():
     """Builds and compiles the LangGraph state graph."""
@@ -102,13 +97,15 @@ def run_rag_graph(question: str) -> Dict[str, Any]:
 
 def stream_rag_graph(
     question: str,
-    top_k_per_query: int = 10,
-    final_k: int = 5
+    top_k_per_query: int = 12,
+    final_k: int = 7
 ) -> Tuple[Generator[str, None, None], List[Document], NormalizedQueryOutput]:
     """
     Executes normalization and hybrid retrieval through LangGraph,
-    then streams the response tokens for UI responsiveness.
+    then streams the response tokens via multi-model fallback waterfall.
     """
+    from src.chain import _stream_with_fallback, SYSTEM_PROMPT
+
     # 1. Normalize query
     normalized = normalize_and_decompose_query(question)
     
@@ -123,18 +120,15 @@ def stream_rag_graph(
     # 3. Format Context
     context_str = format_docs(retrieved_docs)
     
-    # 4. Stream LLM Generation
-    llm = get_llm()
+    # 4. Stream LLM Generation with resilient multi-model fallback
     prompt = ChatPromptTemplate.from_messages([
         ("system", SYSTEM_PROMPT),
         ("human", "{question}")
     ])
-    chain = prompt | llm | StrOutputParser()
+    prompt_value = prompt.format_messages(
+        context=context_str,
+        question=question
+    )
     
-    stream_gen = chain.stream({
-        "context": context_str,
-        "question": question
-    })
-    
+    stream_gen = _stream_with_fallback(prompt_value)
     return stream_gen, retrieved_docs, normalized
-
