@@ -57,14 +57,14 @@ for msg in st.session_state.messages:
                 for src in msg["sources"]:
                     st.markdown(f"- **[{src.get('type', 'doc')}]** [{src.get('source', 'source')}]({src.get('url', '#')})")
 
-if prompt := st.chat_input("Ask a question about code logic, algorithms, notebooks, or past bugs..."):
+if prompt := st.chat_input("Ask a question (in English, Hinglish, or colloquial style)..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
         
     with st.chat_message("assistant"):
         try:
-            stream_gen, sources = ask_repo_stream(prompt)
+            stream_gen, sources, normalized = ask_repo_stream(prompt)
             full_response = st.write_stream(stream_gen)
             
             source_data = [
@@ -76,6 +76,16 @@ if prompt := st.chat_input("Ask a question about code logic, algorithms, noteboo
                 for s in sources
             ]
             
+            # Show normalization and retrieval diagnostics
+            col1, col2 = st.columns([1, 1])
+            with st.expander("🧠 Query Normalization & Retrieval Insights"):
+                if normalized:
+                    st.markdown(f"**Detected Language:** `{normalized.detected_language}` | **Tone:** `{normalized.response_tone}` | **Multi-intent:** `{normalized.is_multi_intent}`")
+                    st.markdown(f"**Context Resolved Query:** *{normalized.context_resolved_query}*")
+                    st.markdown("**Decomposed Sub-Queries:**")
+                    for sq in normalized.retrieval_queries:
+                        st.markdown(f"- `[{sq.target_focus}]` {sq.query}")
+                        
             if source_data:
                 with st.expander("📚 View Retrieved Sources"):
                     for s in source_data:
@@ -84,7 +94,8 @@ if prompt := st.chat_input("Ask a question about code logic, algorithms, noteboo
             st.session_state.messages.append({
                 "role": "assistant",
                 "content": full_response,
-                "sources": source_data
+                "sources": source_data,
+                "normalized": normalized.model_dump() if normalized else None
             })
         except Exception as e:
             st.error(f"Error querying repository: {e}")
