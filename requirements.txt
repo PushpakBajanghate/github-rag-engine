@@ -15,3 +15,5 @@ pydantic>=2.7.0
 pydantic-settings>=2.2.1
 tiktoken>=0.7.0
 rich>=13.7.1
+langgraph>=0.2.0
+rank-bm25>=0.2.2
