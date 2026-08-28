@@ -1,11 +1,16 @@
 from functools import lru_cache
-from typing import Tuple, List, Generator, Optional, Any
+import logging
+from typing import Tuple, List, Generator, Optional, Any, Iterator
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.documents import Document
+from langchain_core.messages import BaseMessage
+from langchain_core.outputs import ChatGenerationChunk
+from langchain_core.language_models.chat_models import BaseChatModel
 from src.config import config
-from src.retriever import retrieve_and_rerank
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are a Principal Software Engineer and Codebase Architect reviewing a GitHub repository.
 Use the following retrieved code snippets, configuration files, notebooks, and GitHub issues to answer the user question accurately.
@@ -21,13 +26,80 @@ Context:
 {context}
 """
 
-@lru_cache(maxsize=1)
-def get_llm() -> ChatGoogleGenerativeAI:
+# -----------------------------------------------------------------------
+# Resilient LLM — waterfalls across models on 429 / 404 / 503
+# -----------------------------------------------------------------------
+_MODEL_CHAIN = [config.LLM_MODEL] + list(config.LLM_MODEL_FALLBACKS)
+_QUOTA_ERRORS = ("429", "resource_exhausted", "quota", "rate limit", "503", "unavailable")
+_NOT_FOUND_ERRORS = ("404", "not_found", "not found", "no longer available")
+
+def _is_retriable_error(e: Exception) -> bool:
+    err = str(e).lower()
+    return any(k in err for k in _QUOTA_ERRORS + _NOT_FOUND_ERRORS)
+
+def _build_llm(model: str) -> ChatGoogleGenerativeAI:
     return ChatGoogleGenerativeAI(
-        model=config.LLM_MODEL,
+        model=model,
         google_api_key=config.GOOGLE_API_KEY,
-        temperature=0.1
+        temperature=0.1,
+        max_retries=0,  # we handle retries ourselves
     )
+
+def get_llm(model: Optional[str] = None) -> ChatGoogleGenerativeAI:
+    """Returns the primary configured LLM (no fallback logic here — use get_resilient_chain for production)."""
+    return _build_llm(model or config.LLM_MODEL)
+
+def _invoke_with_fallback(prompt_value) -> str:
+    """Try each model in the waterfall chain. Returns first successful response."""
+    last_err = None
+    for model in _MODEL_CHAIN:
+        try:
+            llm = _build_llm(model)
+            result = llm.invoke(prompt_value)
+            content = result.content if hasattr(result, "content") else str(result)
+            # Strip LangChain structured output artifacts if any
+            if isinstance(content, list):
+                content = " ".join(
+                    part.get("text", "") if isinstance(part, dict) else str(part)
+                    for part in content
+                )
+            logger.info(f"LLM answered via model: {model}")
+            return content
+        except Exception as e:
+            last_err = e
+            if _is_retriable_error(e):
+                logger.warning(f"Model '{model}' failed ({type(e).__name__}). Trying next fallback...")
+                continue
+            raise  # non-retriable error — propagate immediately
+    raise RuntimeError(
+        f"All LLM models exhausted. Last error: {last_err}"
+    ) from last_err
+
+def _stream_with_fallback(prompt_value) -> Iterator[str]:
+    """Try streaming from each model in the waterfall chain."""
+    last_err = None
+    for model in _MODEL_CHAIN:
+        try:
+            llm = _build_llm(model)
+            for chunk in llm.stream(prompt_value):
+                content = chunk.content if hasattr(chunk, "content") else str(chunk)
+                if isinstance(content, list):
+                    content = "".join(
+                        part.get("text", "") if isinstance(part, dict) else str(part)
+                        for part in content
+                    )
+                yield content
+            logger.info(f"LLM streamed via model: {model}")
+            return  # success — stop iteration
+        except Exception as e:
+            last_err = e
+            if _is_retriable_error(e):
+                logger.warning(f"Streaming model '{model}' failed ({type(e).__name__}). Trying next...")
+                continue
+            raise
+    raise RuntimeError(
+        f"All LLM streaming models exhausted. Last error: {last_err}"
+    ) from last_err
 
 def format_docs(docs: List[Document]) -> str:
     formatted = []
