@@ -32,13 +32,24 @@ IGNORED_FILE_SUFFIXES = (
     ".svg", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".woff", ".woff2", ".ttf", ".eot"
 )
 
+import re
+
 def parse_github_url(repo_url: str) -> Tuple[str, str]:
-    """Extracts owner and repo name from full GitHub URL."""
-    clean_url = repo_url.rstrip("/").replace("https://github.com/", "")
+    """Extracts owner and repo name from full GitHub URL with strict input sanitization."""
+    clean_url = repo_url.strip().rstrip("/").replace("https://github.com/", "").replace("http://github.com/", "")
     parts = clean_url.split("/")
     if len(parts) < 2:
         raise ValueError("Invalid GitHub URL format. Expected: https://github.com/owner/repo")
-    return parts[0], parts[1]
+    
+    owner, repo = parts[0].strip(), parts[1].strip()
+    # Strip any trailing .git
+    if repo.endswith(".git"):
+        repo = repo[:-4]
+        
+    # Strict validation against GitHub valid naming characters (anti-SSRF / injection)
+    if not re.match(r"^[a-zA-Z0-9_\-\.]+$", owner) or not re.match(r"^[a-zA-Z0-9_\-\.]+$", repo):
+        raise ValueError("Invalid characters detected in repository owner or name.")
+    return owner, repo
 
 def parse_jupyter_notebook(raw_json_str: str) -> str:
     """
