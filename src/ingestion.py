@@ -18,8 +18,19 @@ SUPPORTED_EXTENSIONS = (
 IGNORED_DIRS = {
     ".git", ".github", "node_modules", "venv", ".venv", "env",
     "__pycache__", ".pytest_cache", ".idea", ".vscode", "dist",
-    "build", ".mypy_cache", ".tox", ".eggs"
+    "build", ".mypy_cache", ".tox", ".eggs", "coverage", ".next"
 }
+
+IGNORED_FILENAMES = {
+    "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "poetry.lock",
+    "Pipfile.lock", "Cargo.lock", "composer.lock", "flake.lock",
+    ".DS_Store", "Thumbs.db"
+}
+
+IGNORED_FILE_SUFFIXES = (
+    ".min.js", ".min.css", ".map", ".bundle.js", ".chunk.js",
+    ".svg", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".woff", ".woff2", ".ttf", ".eot"
+)
 
 def parse_github_url(repo_url: str) -> Tuple[str, str]:
     """Extracts owner and repo name from full GitHub URL."""
@@ -67,8 +78,15 @@ def parse_jupyter_notebook(raw_json_str: str) -> str:
     return raw_json_str
 
 def is_ignored_path(path: str) -> bool:
-    """Checks if the path is inside an ignored directory."""
-    parts = path.replace("\\", "/").split("/")
+    """Checks if the path or filename is inside an ignored directory or matches ignored files."""
+    clean_path = path.replace("\\", "/")
+    filename = clean_path.split("/")[-1]
+    
+    # Check ignored filenames and suffixes
+    if filename in IGNORED_FILENAMES or filename.endswith(IGNORED_FILE_SUFFIXES):
+        return True
+        
+    parts = clean_path.split("/")
     return any(p in IGNORED_DIRS or p.startswith(".") for p in parts[:-1])
 
 def fetch_single_file(repo, file_path: str, html_url: str, owner: str, repo_name: str, sha: Optional[str] = None) -> Optional[Document]:
@@ -107,7 +125,41 @@ def fetch_single_file(repo, file_path: str, html_url: str, owner: str, repo_name
     except Exception:
         return None
 
-def fetch_repository_data(repo_url: str, max_issues: int = 50, max_files: int = 300) -> List[Document]:
+def resolve_repo_branch(repo, requested_branch: Optional[str] = None) -> Tuple[str, Optional[str]]:
+    """Resolves valid branch name and commit SHA, automatically detecting default branch (main/master/etc)."""
+    if requested_branch and requested_branch.strip():
+        try:
+            b = repo.get_branch(requested_branch.strip())
+            return b.name, b.commit.sha
+        except Exception:
+            pass
+            
+    # Try repository default branch
+    try:
+        def_name = repo.default_branch
+        if def_name:
+            b = repo.get_branch(def_name)
+            return b.name, b.commit.sha
+    except Exception:
+        pass
+        
+    # Try common defaults
+    for name in ("main", "master", "trunk", "develop"):
+        try:
+            b = repo.get_branch(name)
+            return b.name, b.commit.sha
+        except Exception:
+            continue
+            
+    return repo.default_branch or "main", None
+
+def fetch_repository_data(
+    repo_url: str,
+    max_issues: int = 50,
+    max_files: int = 300,
+    branch: Optional[str] = None,
+    allowed_extensions: Optional[Tuple[str, ...]] = None
+) -> List[Document]:
     """
     Ingests source code, notebooks, and issues from a public/private GitHub repository.
     Uses Git Tree API and multi-threading for fast, scalable processing.
@@ -119,36 +171,47 @@ def fetch_repository_data(repo_url: str, max_issues: int = 50, max_files: int = 
     
     repo = gh.get_repo(f"{owner}/{repo_name}")
     documents: List[Document] = []
+    active_extensions = allowed_extensions or SUPPORTED_EXTENSIONS
+    
+    # Resolve exact working branch and tree SHA
+    target_branch, commit_sha = resolve_repo_branch(repo, branch)
+    tree_ref = commit_sha or target_branch
     
     # 1. Fetch Repository Code & Markdown Files via Git Tree API
     file_tasks = []
     try:
-        default_branch = repo.default_branch
-        git_tree = repo.get_git_tree(default_branch, recursive=True)
+        git_tree = repo.get_git_tree(tree_ref, recursive=True)
         
         for item in git_tree.tree:
             if item.type == "blob":
-                if item.path.endswith(SUPPORTED_EXTENSIONS) and not is_ignored_path(item.path):
+                if item.path.endswith(active_extensions) and not is_ignored_path(item.path):
                     # Skip oversized single files (> 1.5MB)
                     if getattr(item, "size", 0) and item.size > 1_500_000:
                         continue
-                    file_url = f"https://github.com/{owner}/{repo_name}/blob/{default_branch}/{item.path}"
+                    file_url = f"https://github.com/{owner}/{repo_name}/blob/{target_branch}/{item.path}"
                     file_tasks.append((item.path, file_url, item.sha))
                     if len(file_tasks) >= max_files:
                         break
     except Exception:
         # Fallback to get_contents directory crawl if Git Tree fails
-        contents = repo.get_contents("")
+        try:
+            contents = repo.get_contents("", ref=target_branch)
+        except Exception:
+            contents = repo.get_contents("")
+            
         while contents and len(file_tasks) < max_files:
             file_content = contents.pop(0)
             if file_content.type == "dir":
                 if not is_ignored_path(file_content.path):
                     try:
-                        contents.extend(repo.get_contents(file_content.path))
+                        contents.extend(repo.get_contents(file_content.path, ref=target_branch))
                     except Exception:
-                        pass
+                        try:
+                            contents.extend(repo.get_contents(file_content.path))
+                        except Exception:
+                            pass
             else:
-                if file_content.path.endswith(SUPPORTED_EXTENSIONS) and not is_ignored_path(file_content.path):
+                if file_content.path.endswith(active_extensions) and not is_ignored_path(file_content.path):
                     file_tasks.append((file_content.path, file_content.html_url, None))
 
     # Fetch file contents in parallel
