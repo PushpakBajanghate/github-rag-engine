@@ -1,7 +1,9 @@
+import os
 import datetime
 from typing import List, Dict, Any, Optional
 import streamlit as st
 
+from src.config import config
 from src.ingestion import fetch_repository_data, SUPPORTED_EXTENSIONS
 from src.chunker import chunk_code_and_docs
 from src.vectorstore import index_documents, load_vectorstore
@@ -213,6 +215,28 @@ def reset_session():
 with st.sidebar:
     st.markdown("### ⚡ **Repository Ingestion**")
     st.caption("Enter any GitHub repository URL to index codebase & issues.")
+    
+    # 5.0 Security & API Key Resolution (Cloud & Local)
+    if not config.GOOGLE_API_KEY:
+        st.warning("⚠️ Google Gemini API Key required.")
+        api_key_input = st.text_input(
+            "🔑 Gemini API Key",
+            type="password",
+            placeholder="AIzaSy...",
+            help="Your API key is only kept in session memory and never logged or saved to disk."
+        )
+        if api_key_input:
+            os.environ["GOOGLE_API_KEY"] = api_key_input.strip()
+            config.GOOGLE_API_KEY = api_key_input.strip()
+            st.success("API key activated for this session!")
+    else:
+        st.markdown(
+            '<div style="display:flex;align-items:center;gap:6px;margin-bottom:12px;">'
+            '<span style="height:8px;width:8px;border-radius:50%;background:#3fb950;display:inline-block;"></span>'
+            '<span style="font-size:0.8rem;color:#8b949e;">Gemini API Key Connected</span>'
+            '</div>',
+            unsafe_allow_html=True
+        )
     
     # 5.1 Repository Ingestion Panel
     repo_url_input = st.text_input(
