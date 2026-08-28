@@ -7,8 +7,8 @@ class Settings(BaseSettings):
     CHROMA_PERSIST_DIR: str = "./data/chroma_db"
     
     # Embedding and LLM specifications
-    EMBEDDING_MODEL: str = "models/gemini-embedding-001"
-    LLM_MODEL: str = "gemini-3.6-flash"
+    EMBEDDING_MODEL: str = "models/text-embedding-004"
+    LLM_MODEL: str = "gemini-2.5-flash"
     
     model_config = SettingsConfigDict(
         env_file=".env",
