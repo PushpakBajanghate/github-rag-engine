@@ -1,4 +1,4 @@
-﻿# 📜 Architectural Decisions & Error Resolution Log (`decision.md`)
+# 📜 Architectural Decisions & Error Resolution Log (`decision.md`)
 
 This living document tracks all major engineering challenges, production errors, architectural decisions, and permanent fixes implemented across the lifecycle of the **GitHub RAG Engine** project.
 
@@ -121,3 +121,20 @@ This living document tracks all major engineering challenges, production errors,
   2. Wrote `_build_llm(model)`, `_invoke_with_fallback(prompt_value)`, and `_stream_with_fallback(prompt_value)` in `src/chain.py`.
   3. Wired `generate_answer_node()` and `stream_rag_graph()` in `src/graph.py` to these resilient callers.
   The app now silently cycles through models and **never crashes due to quota exhaustion again**, regardless of free-tier limits.
+
+---
+
+### DEC-011: Streamlit Cloud Production Deployment & Pipeline Security Hardening
+* **Error / Challenge:**
+  Deploying the application to Streamlit Community Cloud or public hosting posed several security and deployment challenges:
+  1. Inability to read secrets dynamically if `.env` is omitted from production git repositories.
+  2. Potential SSRF or path traversal vulnerabilities via unvalidated repository URL inputs.
+  3. Risk of exposing API keys in client logs or vector store metadata.
+* **Fix / Decision Taken:**
+  Hardened the configuration and ingestion pipeline with multi-tier secret resolution (`os.environ` $\to$ `.env` $\to$ `st.secrets` $\to$ Session State), strict regex URL sanitization, and production `.streamlit/config.toml` deployment presets.
+* **Brief Description:**
+  1. Added `get_secret()` in `src/config.py` to automatically detect Streamlit Cloud Secrets (`st.secrets["GOOGLE_API_KEY"]`) without requiring local `.env` files.
+  2. Enhanced `parse_github_url()` in `src/ingestion.py` with strict regex validation (`^[a-zA-Z0-9_\-\.]+$`) to reject malicious URL inputs and command injection attempts.
+  3. Added session-level password-masked API key resolution in `app.py` for instances where public users test on Streamlit Cloud without server-level environment variables.
+  4. Configured `.streamlit/config.toml` for headless, cross-site request forgery protected, dark slate production hosting.
+
