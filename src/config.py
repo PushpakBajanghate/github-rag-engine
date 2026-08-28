@@ -1,9 +1,24 @@
 import os
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+def get_secret(key: str, default: str = "") -> str:
+    """Safely resolves configuration from environment variables or Streamlit Cloud secrets."""
+    # 1. Check OS Environment
+    val = os.getenv(key)
+    if val:
+        return val
+    # 2. Check Streamlit Cloud Secrets (if running in Streamlit)
+    try:
+        import streamlit as st
+        if hasattr(st, "secrets") and key in st.secrets:
+            return str(st.secrets[key])
+    except Exception:
+        pass
+    return default
+
 class Settings(BaseSettings):
-    GOOGLE_API_KEY: str
-    GITHUB_TOKEN: str = ""
+    GOOGLE_API_KEY: str = get_secret("GOOGLE_API_KEY", "")
+    GITHUB_TOKEN: str = get_secret("GITHUB_TOKEN", "")
     CHROMA_PERSIST_DIR: str = "./data/chroma_db"
     
     # Embedding and LLM specifications
@@ -25,4 +40,4 @@ class Settings(BaseSettings):
         extra="ignore"
     )
 
-config = Settings()
+config = Settings()
