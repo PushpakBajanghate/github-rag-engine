@@ -35,8 +35,8 @@ def hybrid_retrieve_node(state: RAGGraphState) -> Dict[str, Any]:
     retrieved_docs = hybrid_retrieve_and_deduplicate(
         sub_queries=sub_queries,
         context_resolved_query=resolved_query,
-        top_k_per_query=10,
-        final_k=5
+        top_k_per_query=12,
+        final_k=7
     )
     
     context_str = format_docs(retrieved_docs)
@@ -100,7 +100,11 @@ def run_rag_graph(question: str) -> Dict[str, Any]:
     }
     return rag_graph_app.invoke(initial_state)
 
-def stream_rag_graph(question: str) -> Tuple[Generator[str, None, None], List[Document], NormalizedQueryOutput]:
+def stream_rag_graph(
+    question: str,
+    top_k_per_query: int = 10,
+    final_k: int = 5
+) -> Tuple[Generator[str, None, None], List[Document], NormalizedQueryOutput]:
     """
     Executes normalization and hybrid retrieval through LangGraph,
     then streams the response tokens for UI responsiveness.
@@ -112,8 +116,8 @@ def stream_rag_graph(question: str) -> Tuple[Generator[str, None, None], List[Do
     retrieved_docs = hybrid_retrieve_and_deduplicate(
         sub_queries=normalized.retrieval_queries,
         context_resolved_query=normalized.context_resolved_query,
-        top_k_per_query=10,
-        final_k=5
+        top_k_per_query=top_k_per_query,
+        final_k=final_k
     )
     
     # 3. Format Context
@@ -133,3 +137,4 @@ def stream_rag_graph(question: str) -> Tuple[Generator[str, None, None], List[Do
     })
     
     return stream_gen, retrieved_docs, normalized
+
